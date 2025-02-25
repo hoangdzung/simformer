@@ -1,0 +1,16 @@
+
+
+
+
+
+name: tp_score_transformer
+backend: jax
+device: gpu
+
+
+defaults:
+  - model: score_transformer_small
+  - train: tp_train_score_transformer
+  - sde: vesde
+  - posterior: backward_sde
+
