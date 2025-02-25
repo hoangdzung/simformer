@@ -154,7 +154,7 @@ def run_train_transformer_model(
     return params, opt_state
 
 
-def train_transformer_model(task, data, method_cfg, rng):
+def train_transformer_model(task, data, method_cfg, rng, prev_params=None):
     device = method_cfg.device
     sde_params = dict(method_cfg.sde)
     model_params = dict(method_cfg.model)
@@ -189,15 +189,17 @@ def train_transformer_model(task, data, method_cfg, rng):
     )
 
     rng, rng_init = jax.random.split(rng)
-    params = init_fn(
-        rng_init,
-        jnp.ones((10,)),
-        data[:10],
-        node_id,
-        jnp.zeros_like(data[:10]),
-        meta_data=metadata,
-    )
-
+    if prev_params is None:
+        params = init_fn(
+            rng_init,
+            jnp.ones((10,)), #t
+            data[:10], # data
+            node_id, # data_id
+            jnp.zeros_like(data[:10]), #condition, why 10?
+            meta_data=metadata,
+        )
+    else:
+        params = prev_params
     # Training params
     total_number_steps = int(
         max(

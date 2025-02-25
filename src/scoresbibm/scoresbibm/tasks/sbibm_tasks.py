@@ -26,6 +26,9 @@ class SBIBMTask(InferenceTask):
         else:
             raise NotImplementedError()
 
+    def get_torch_prior(self):
+        return self.task.get_prior_dist()
+        
     def get_simulator(self):
         if self.backend == "torch":
             return self.task.get_simulator()
@@ -50,7 +53,7 @@ class SBIBMTask(InferenceTask):
             # If not implemented in JAX, use PyTorch
             old_backed = self.backend
             self.backend = "torch"
-            prior = self.get_prior()
+            prior = kwargs.get("proposal", None) or self.get_prior()
             simulator = self.get_simulator()
             thetas = prior.sample((num_samples,))
             xs = simulator(thetas)

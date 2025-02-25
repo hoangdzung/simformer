@@ -2,10 +2,12 @@
 import sbi 
 from sbi.utils import posterior_nn, likelihood_nn, classifier_nn
 from sbi.inference import SNPE, SNLE, SNRE
+from sbi.utils import RestrictedPrior
 from scoresbibm.methods.models import SBIPosteriorModel
 
 from scoresbibm.methods.score_sbi import train_conditional_score_model
 from scoresbibm.methods.score_transformer import train_transformer_model
+from scoresbibm.utils.restriction_estimator import get_jax_density_thresholder
 
 
 def run_npe_default(task,data, method_cfg, rng=None):
@@ -66,6 +68,22 @@ def run_score_transformer(task, data, method_cfg, rng=None):
     model.set_default_sampling_kwargs(**method_cfg.posterior)
     return model
 
+def run_tp_score_transformer(task, data, method_cfg, rng=None, x_o=None, num_observations=1, n_rounds=5):
+    if x_o is None:
+        x_o = task.task.get_observation(num_observations)
+    prev_params = None
+    num_sims = data['x'].shape[0]
+    prior = task.get_torch_prior()
+    for _ in range(n_rounds):
+        model = train_transformer_model(task, data, method_cfg, rng, prev_params=prev_params)
+        model.set_default_x_o(x_o)
+        accept_reject_fn = get_jax_density_thresholder(model, rng=rng, quantile=1e-4, num_samples_to_estimate_support=10_000)
+        proposal = RestrictedPrior(prior, accept_reject_fn, sample_with="rejection")
+        data = task.get_data(num_sims, rng=rng, proposal=proposal)
+        prev_params = model.params
+
+    model.set_default_sampling_kwargs(**method_cfg.posterior)
+    return model
 
 
 def get_method(name:str):
@@ -78,6 +96,8 @@ def get_method(name:str):
         return run_nre_default
     elif name == "nspe":
         return run_nspe
+    elif "tp_score_transformer" in name:
+        return run_tp_score_transformer
     elif "score_transformer" in name:
         return run_score_transformer
     else:
