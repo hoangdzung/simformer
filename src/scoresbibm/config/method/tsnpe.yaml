@@ -1,0 +1,10 @@
+
+name: tsnpe 
+backend: torch
+device: cpu
+
+
+defaults:
+  - model: posterior_nn
+  - train: train_ts_sbi
+  - posterior: none

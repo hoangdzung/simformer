@@ -1,0 +1,10 @@
+training_batch_size: 1000
+learning_rate: 1e-3
+validation_fraction: 0.1
+stop_after_epochs: 20
+max_num_epochs: 2147483647
+clip_max_norm: 5.
+num_observations: 1
+n_rounds: 10
+num_samples_to_estimate_support: 10000
+quantile: 1e-4

@@ -80,7 +80,7 @@ def run_train_transformer_model(
     else:
         meta_data_val = meta_data
         meta_data_train = meta_data
-    
+
     sampler = partial(
         batch_sampler, data=data_train, node_id=node_id, meta_data=meta_data_train, num_devices=num_devices
     )
@@ -97,10 +97,15 @@ def run_train_transformer_model(
     l_train = None
     min_l_val = 1e10
     early_stopping_params = None
-
+    
+    need_transfer = data.devices() != jax.devices()[0]
+    
     for j in range(total_number_steps):
         key, key_batch, key_update, key_val = jax.random.split(key, 4)
         data_batch, node_id_batch, meta_data_batch = sampler(key_batch, batch_size_per_device)
+        if need_transfer:
+            data_batch = jax.device_put(data_batch, jax.devices()[0])
+            meta_data_batch = jax.device_put(meta_data_batch, jax.devices()[0])
         loss, replicated_params, replicated_opt_state = update(
             replicated_params,
             replicated_opt_state,
@@ -117,14 +122,26 @@ def run_train_transformer_model(
 
         # Validation loss
         if validation_fraction > 0 and ((j % val_every) == 0) and j > 50:
-            l_val = loss_fn(
-                jax.tree_map(lambda x: x[0], replicated_params),
-                key_val,
-                data_val,
-                node_id,
-                meta_data_val,
-            )
+            need_transfer = data_val.devices() != jax.devices()[0]
+            num_batches = len(data_val) // batch_size
+            batch_losses = []
+            for i in range(num_batches):
+                batch_data_val = data_val[i * batch_size : (i + 1) * batch_size]
+                batch_meta_data_val = meta_data_val if meta_data_val is None else meta_data_val[i * batch_size : (i + 1) * batch_size]
+                        
+                if need_transfer:
+                    batch_data_val = jax.device_put(batch_data_val, jax.devices()[0])
+                    batch_meta_data_val = batch_meta_data_val if batch_meta_data_val is None else jax.device_put(batch_meta_data_val, jax.devices()[0])
 
+                l_val_batch = loss_fn(
+                    jax.tree_map(lambda x: x[0], replicated_params),
+                    key_val,
+                    batch_data_val,
+                    node_id,
+                    batch_meta_data_val,
+                )
+                batch_losses.append(l_val_batch)
+            l_val = sum(batch_losses) / len(batch_losses)
             if l_val / l_train > val_error_ratio:
                 early_stopping_counter += 1
             else:
@@ -181,6 +198,7 @@ def train_transformer_model(task, data, method_cfg, rng, prev_params=None):
     sde, T_min, T_max, _weight_fn, output_scale_fn = init_sde_related(
         data, name=sde_params.pop("name"), **sde_params
     )
+
     weight_fn = lambda t: _weight_fn(t).reshape(-1, 1, 1)
     if not model_params.pop("use_output_scale_fn", True):
         output_scale_fn = None
@@ -196,7 +214,7 @@ def train_transformer_model(task, data, method_cfg, rng, prev_params=None):
             data[:10], # data
             node_id, # data_id
             jnp.zeros_like(data[:10]), #condition, why 10?
-            meta_data=metadata,
+            meta_data=metadata if metadata is None else metadata[:10],
         )
     else:
         params = prev_params
@@ -304,7 +322,7 @@ def train_transformer_model(task, data, method_cfg, rng, prev_params=None):
     )
 
     sde_init_params = {
-        "data": jax.device_put(data, jax.devices("cpu")[0]),
+        "data": jax.device_put(data, jax.devices()[0]),
         **dict(method_cfg.sde),
     }
     model_init_params = {"num_nodes": theta_dim + x_dim, **dict(method_cfg.model)}

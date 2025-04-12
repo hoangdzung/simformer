@@ -16,8 +16,8 @@ from scoresbibm.evaluation.eval_task import eval_coverage, eval_negative_log_lik
 
 from scoresbibm.tasks import get_task
 from scoresbibm.methods.method_base import get_method
-from scoresbibm.evaluation import get_metric, eval_inference_task, eval_all_conditional_task
-from scoresbibm.tasks.base_task import AllConditionalTask, InferenceTask
+from scoresbibm.evaluation import get_metric, eval_inference_task, eval_all_conditional_task, eval_cgm_task
+from scoresbibm.tasks.base_task import AllConditionalTask, InferenceTask, CGMTask
 from scoresbibm.tasks.unstructured_tasks import UnstructuredTask
 from scoresbibm.utils.data_utils import init_dir, generate_unique_model_id, save_model, save_summary, load_model, query
 
@@ -68,7 +68,7 @@ def score_sbi(cfg: DictConfig):
     log.info(f"Seed: {seed}")
     
     init_dir(output_super_dir)
-    
+
     # Set up the task # TODO: maybe add data_device
     if cfg.model_id is None:
         log.info(f"Task: {cfg.task.name}")
@@ -111,19 +111,26 @@ def score_sbi(cfg: DictConfig):
     metrics_results = {}
     for m, metric_params in metrics.items():
         log.info(f"Evaluating metric: {m}")
+        log.info(f"Metric params: {metric_params}")
         rng, rng_eval = jax.random.split(rng)
         
         if m == "none":
             continue
+        elif "rmsd" in m and issubclass(type(task), CGMTask):
+            num_samples = metric_params.get("num_samples", 1000)
+            plot_path = cfg.eval.get('plot_path', None)
+            batch_size = metric_params.get("batch_size", None)
+
+            metric_values, eval_time = eval_cgm_task(task, model, rng_eval, num_samples=num_samples, save_path=plot_path, batch_size=batch_size)
         elif "c2st" in m:
             metric_params = dict(metric_params)
             metric_fn = get_metric(str(m))
             num_samples = metric_params.pop("num_samples", 1000)
             num_evaluations = metric_params.pop("num_evaluations", 50)
-            
+            random_sample = metric_params.pop("random_sample", False)
             
             if issubclass(type(task), InferenceTask):
-                metric_values, eval_time = eval_inference_task(task, model, metric_fn, metric_params, rng_eval, num_samples=num_samples, num_evaluations=num_evaluations)
+                metric_values, eval_time = eval_inference_task(task, model, metric_fn, metric_params, rng_eval, num_samples=num_samples, num_evaluations=num_evaluations, random_sample=random_sample)
             elif issubclass(task.__class__, UnstructuredTask):
                 metric_values, eval_time = eval_unstructured_task(task, model, metric_fn, metric_params, rng_eval, num_samples=num_samples, num_evaluations=num_evaluations)
             elif issubclass(task.__class__, AllConditionalTask):

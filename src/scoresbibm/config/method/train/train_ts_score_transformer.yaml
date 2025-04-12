@@ -12,9 +12,8 @@ stop_early_count: 5
 rebalance_loss: False
 z_score_data: False
 num_observations: 1
-n_rounds: 10
+n_round: 10
 num_samples_to_estimate_support: 10000
-quantile: 1e-4
 
 defaults:
   - condition_mask_fn: structured_random

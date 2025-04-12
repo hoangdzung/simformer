@@ -3,6 +3,7 @@ from sbibm import get_task as _get_torch_task
 import torch
 import jax
 import jax.numpy as jnp
+import numpy as np 
 
 from scoresbibm.tasks.base_task import InferenceTask
 
@@ -50,6 +51,7 @@ class SBIBMTask(InferenceTask):
             xs = simulator(thetas)
             return {"theta":thetas, "x":xs}
         except:
+            print("aaaa")
             # If not implemented in JAX, use PyTorch
             old_backed = self.backend
             self.backend = "torch"
@@ -86,6 +88,26 @@ class SBIBMTask(InferenceTask):
             elif self.backend == "jax":
                 return jnp.array(out)
 
+    def get_reference_posterior_samples(self, index: int, x_o=None, num_samples=10000):
+        if x_o is None:
+            if self.backend == "torch":
+                return self.task.get_reference_posterior_samples(index)
+            else:
+                out = self.task.get_reference_posterior_samples(index)
+                if self.backend == "numpy":
+                    return out.numpy()
+                elif self.backend == "jax":
+                    return jnp.array(out)
+        else:    
+            if self.backend == "torch":
+                return self.task._sample_reference_posterior(num_samples=num_samples, observation=x_o)
+            else:
+                out = self.task._sample_reference_posterior(num_samples=num_samples, observation=torch.from_numpy(np.array(x_o)))
+                if self.backend == "numpy":
+                    return out.numpy()
+                elif self.backend == "jax":
+                    return jnp.array(out)
+
     def get_true_parameters(self, index: int):
         if self.backend == "torch":
             return self.task.get_true_parameters(index)
@@ -116,6 +138,33 @@ class LinearGaussian(SBIBMTask):
         
         return base_mask_fn
     
+class LinearGaussianExtended(SBIBMTask):
+    def __init__(self, backend: str = "torch") -> None:
+        super().__init__(name="gaussian_linear_extended", backend=backend)
+        
+    def get_base_mask_fn(self):
+        task = _get_torch_task(self.name)
+        theta_dim = task.dim_parameters
+        x_dim = task.dim_data
+        thetas_mask = jnp.eye(theta_dim, dtype=jnp.bool_)
+        x_i_mask = jnp.eye(x_dim, dtype=jnp.bool_)
+    
+        base_mask = jnp.block([
+            [thetas_mask, jnp.zeros((theta_dim, x_dim), dtype=jnp.bool_)],
+            [jnp.zeros((x_dim, theta_dim), dtype=jnp.bool_), x_i_mask]
+        ])
+        
+        
+        # The last data (row) should only depend on itself
+        base_mask = base_mask.at[-1, :].set(False)
+
+        # The last data (row) should generate the other data (columns)
+        base_mask = base_mask.at[-x_dim:, -1].set(True)
+        
+        def base_mask_fn(node_ids, node_meta_data):
+            return base_mask[node_ids, :][:, node_ids]
+        
+        return base_mask_fn
     
 class BernoulliGLM(SBIBMTask):
     def __init__(self, backend: str = "torch") -> None:
@@ -153,6 +202,33 @@ class MixtureGaussian(SBIBMTask):
         
         return base_mask_fn
         
+class MixtureGaussianExtended(SBIBMTask):
+    def __init__(self, backend: str = "torch") -> None:
+        super().__init__(name="gaussian_mixture_extended", backend=backend)
+        
+    def get_base_mask_fn(self):
+        task = _get_torch_task(self.name)
+        theta_dim = task.dim_parameters
+        x_dim = task.dim_data
+        thetas_mask = jnp.eye(theta_dim, dtype=jnp.bool_)
+        x_mask = jnp.tril(jnp.ones((x_dim, x_dim), dtype=jnp.bool_))
+        
+        base_mask = jnp.block([
+            [thetas_mask, jnp.zeros((theta_dim, x_dim), dtype=jnp.bool_)],
+            [jnp.ones((x_dim - 1, theta_dim), dtype=jnp.bool_), x_mask[:-1, :]],
+            [jnp.zeros((1, theta_dim + x_dim), dtype=jnp.bool_)]
+        ])
+        base_mask = base_mask.astype(jnp.bool_)
+        # The last data (row) should only depend on itself
+        base_mask = base_mask.at[-1, -1].set(True)
+        
+        # The last data (row) should generate the other two data (column 2 and 3)
+        base_mask = base_mask.at[2, -1].set(True)
+        base_mask = base_mask.at[3, -1].set(True)
+        def base_mask_fn(node_ids, node_meta_data):
+            return base_mask[node_ids, :][:, node_ids]
+        
+        return base_mask_fn
     
 
 class TwoMoons(SBIBMTask):
@@ -171,8 +247,56 @@ class TwoMoons(SBIBMTask):
             return base_mask[node_ids, :][:, node_ids]
         
         return base_mask_fn
-        
 
+    def get_reference_posterior_samples(self, index: int, x_o=None, num_samples=10000):
+        if x_o is None:
+            if self.backend == "torch":
+                return self.task.get_reference_posterior_samples(index)
+            else:
+                out = self.task.get_reference_posterior_samples(index)
+                if self.backend == "numpy":
+                    return out.numpy()
+                elif self.backend == "jax":
+                    return jnp.array(out)
+        else:
+    
+            if self.backend == "torch":
+                return self.task._sample_reference_posterior(num_samples=num_samples, num_observation=x_o.shape[0], observation=x_o)
+            else:
+                out = self.task._sample_reference_posterior(num_samples=num_samples, num_observation=x_o.shape[0], observation=torch.from_numpy(np.array(x_o)))    
+                if self.backend == "numpy":
+                    return out.numpy()
+                elif self.backend == "jax":
+                    return jnp.array(out)
+class TwoMoonsExtended(SBIBMTask):
+    observations = range(1, 2)
+    def __init__(self, backend: str = "torch") -> None:
+        super().__init__(name="two_moons_extended", backend=backend)
+        
+    def get_base_mask_fn(self):
+        task = _get_torch_task(self.name)
+        theta_dim = task.dim_parameters
+        x_dim = task.dim_data
+        thetas_mask = jnp.eye(theta_dim, dtype=jnp.bool_)
+        x_mask = jnp.tril(jnp.ones((x_dim, x_dim), dtype=jnp.bool_))
+        
+        base_mask = jnp.block([
+            [thetas_mask, jnp.zeros((theta_dim, x_dim), dtype=jnp.bool_)],
+            [jnp.ones((x_dim - 1, theta_dim), dtype=jnp.bool_), x_mask[:-1, :]],
+            [jnp.zeros((1, theta_dim + x_dim), dtype=jnp.bool_)]
+        ])
+        base_mask = base_mask.astype(jnp.bool_)
+        # The last data (row) should only depend on itself
+        base_mask = base_mask.at[-1, -1].set(True)
+        
+        # The last data (row) should generate the other two data (column 2 and 3)
+        base_mask = base_mask.at[2, -1].set(True)
+        base_mask = base_mask.at[3, -1].set(True)
+        def base_mask_fn(node_ids, node_meta_data):
+            return base_mask[node_ids, :][:, node_ids]
+        
+        return base_mask_fn
+    
 class SLCP(SBIBMTask):
     def __init__(self, backend: str = "torch") -> None:
         super().__init__(name="slcp", backend=backend)

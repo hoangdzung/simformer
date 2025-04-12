@@ -549,7 +549,7 @@ class AllConditionalScoreModel(AllConditionalModel):
         edge_mask = self._check_edge_mask(edge_mask, node_id, condition_mask, meta_data)
         if x_o.shape[0] > 0:
             x_o = self._z_score_if_needed(x_o, node_id, condition_mask)
-        
+
         sampling_kwargs = {**deepcopy(self.sampling_kwargs), **kwargs}
         if num_steps is None:
             num_steps = sampling_kwargs.pop("num_steps")
@@ -581,7 +581,7 @@ class AllConditionalScoreModel(AllConditionalModel):
             + mean_end_per_node[node_id]
         )
         condition_mask = condition_mask.reshape(x_T.shape[-1])
-        
+        x_T = jax.device_put(x_T, jax.devices()[0])
         sampling_method = sampling_kwargs.pop("sampling_method")
         if verbose:
             print("Sampling method: ", sampling_method)

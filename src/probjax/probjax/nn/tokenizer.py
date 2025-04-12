@@ -148,7 +148,6 @@ class ScalarTokenizer(Tokenizer):
         data = data.reshape(-1, sequence_length, variable_dim)
         data_id = data_id.astype(jnp.int32).reshape(-1, sequence_length, 1)
         data_id, data = jnp.broadcast_arrays(data_id, data)
-
         if meta_data is not None:
             meta_data.reshape(-1, sequence_length, variable_dim)
             data_id, data, meta_data = jnp.broadcast_arrays(data_id, data, meta_data)
@@ -188,7 +187,7 @@ class ScalarTokenizer(Tokenizer):
             node_embeding_fn = hk.Embed(
                 self.max_sequence_length,
                 output_dim,
-                w_init=hk.initializers.Orthogonal(scale=0.5),
+                w_init=hk.initializers.TruncatedNormal(stddev=0.02), #hk.initializers.Orthogonal(scale=0.5),
             )
         else:
             node_embeding_fn = self.node_embeding_builder(output_dim)

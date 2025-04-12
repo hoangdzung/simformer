@@ -1,14 +1,17 @@
 
 
-from scoresbibm.tasks.base_task import InferenceTask, AllConditionalTask
+from scoresbibm.tasks.base_task import InferenceTask, AllConditionalTask, CGMTask
 
 import jax
+import jax.numpy as jnp
+
 import time
 import numpy as np
 import torch
 
 from scoresbibm.utils.condition_masks import get_condition_mask_fn
-
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 
 def eval_inference_task(task: InferenceTask, model, metric_fn, metric_params, rng, **kwargs):
@@ -18,19 +21,147 @@ def eval_inference_task(task: InferenceTask, model, metric_fn, metric_params, rn
     if condition_mask_fn != "posterior":
         return None, None
     average_sampling_time = 0
-    for i in task.observations:
+    random_sample = kwargs.get("random_sample", False)
+    observations = [1] if random_sample else task.observations
+
+    for i in observations:
         rng_metric, rng_metric_i = jax.random.split(rng)
-        x_o = task.get_observation(i)
-        true_posterior_samples = task.get_reference_posterior_samples(i)
-        start_time = time.time()
-        est_posterior_samples = model.sample(num_samples=true_posterior_samples.shape[0], x_o=x_o, rng=rng_metric_i)
-        sampling_time = time.time() - start_time
-        val = metric_fn(true_posterior_samples, est_posterior_samples, rng=rng_metric, **metric_params)
-        print("Metric value: ", val)
-        metric_values.append(val)
-        average_sampling_time += sampling_time / len(task.observations)
+        
+        if random_sample:
+            sampling_times = []
+            try:
+                x_o = task.get_observation(i)
+                true_posterior_samples = task.get_reference_posterior_samples(i)
+                
+                start_time = time.time()
+                est_posterior_samples = model.sample(num_samples=true_posterior_samples.shape[0], x_o=x_o, rng=rng_metric_i)
+                sampling_time = time.time() - start_time
+                
+                val = metric_fn(true_posterior_samples, est_posterior_samples, rng=rng_metric, **metric_params)
+                print("Metric value: ", val)
+                metric_values.append(val)
+                sampling_times.append(sampling_time)
+            except Exception as e:
+                print(e)
+            for _ in range(10):
+                x_o = task.get_data(i)["x"]
+                true_posterior_samples = task.get_reference_posterior_samples(i, x_o=x_o)
+                
+                start_time = time.time()
+                est_posterior_samples = model.sample(num_samples=true_posterior_samples.shape[0], x_o=x_o, rng=rng_metric_i)
+                sampling_time = time.time() - start_time
+                
+                val = metric_fn(true_posterior_samples, est_posterior_samples, rng=rng_metric, **metric_params)
+                print("Metric value (random): ", val)
+                metric_values.append(val)
+                sampling_times.append(sampling_time)
+            
+            average_sampling_time = sum(sampling_times) / len(sampling_times)
+            
+        else:
+            print("Extended tasks are not working yet")
+            x_o = task.get_observation(i)
+            true_posterior_samples = task.get_reference_posterior_samples(i)
+            
+            start_time = time.time()
+            est_posterior_samples = model.sample(num_samples=true_posterior_samples.shape[0], x_o=x_o, rng=rng_metric_i)
+            sampling_time = time.time() - start_time
+            
+            val = metric_fn(true_posterior_samples, est_posterior_samples, rng=rng_metric, **metric_params)
+            print("Metric value: ", val)
+            metric_values.append(val)
+            average_sampling_time += sampling_time / len(observations)
+            
     return metric_values, average_sampling_time
 
+def eval_cgm_task(task: CGMTask, model, rng, num_samples=2000, save_path=None, batch_size=None):
+    metric_values = []
+    average_sampling_time = 0
+    simulator = task.get_simulator()
+    
+    fig, axes = plt.subplots(nrows=task.num_tests, figsize=(6, 3 * task.num_tests))
+    if task.num_tests == 1:
+        axes = [axes]  # Ensure axes is iterable when num_tests = 1
+    
+    
+    for i in range(task.num_tests):
+        test_params = task.get_test_params(i)
+        true_observations_ori = simulator(test_params)
+        
+        if task.backend == "numpy":
+            true_observations = true_observations_ori.numpy() if isinstance(true_observations_ori, torch.Tensor) else np.array(true_observations_ori)
+        elif task.backend == "jax":
+            true_observations = jax.numpy.array(true_observations_ori)
+        elif task.backend == "torch":
+            true_observations = torch.tensor(true_observations_ori) if not isinstance(true_observations_ori, torch.Tensor) else true_observations_ori
+            
+        if task.dim_external > 0:
+            nan_values = np.full((1, task.theta_dim), np.nan)  # Create NaN values for concatenation
+            # Convert true_observations to match task.backend
+            if task.backend == "numpy":
+                meta_data = np.concatenate([nan_values, true_observations], axis=1)
+            elif task.backend == "jax":
+                meta_data = jnp.concatenate([jnp.array(nan_values), true_observations], axis=1)
+            elif task.backend == "torch":
+                meta_data = torch.cat([torch.tensor(nan_values), true_observations], dim=1)
+        else:
+            meta_data = None
+
+        start_time = time.time()
+        
+        all_est_params = []
+        total_time = 0
+
+        # Define batch size
+        batch_size = batch_size if batch_size else num_samples  # Default to full size if batch_size is None
+        num_batches = (num_samples + batch_size - 1) // batch_size  # Ensure all samples are covered
+
+        # Split RNG for each batch
+        rngs = jax.random.split(rng, num_batches)
+
+        # Process in batches
+        for batch_idx in tqdm(range(num_batches), desc="Sampling"):
+            current_batch_size = min(batch_size, num_samples - len(all_est_params))  # Handle last batch size
+            start_time = time.time()
+            batch_samples = model.sample(current_batch_size, x_o=true_observations[0], meta_data=meta_data, rng=rngs[batch_idx])
+            total_time += time.time() - start_time
+            # Ensure the sample is a PyTorch tensor
+            if isinstance(batch_samples, jax.Array):
+                batch_samples = torch.tensor(np.array(batch_samples))
+            elif isinstance(batch_samples, np.ndarray):
+                batch_samples = torch.tensor(batch_samples)
+            elif not isinstance(batch_samples, torch.Tensor):
+                raise TypeError(f"Unsupported sample type: {type(batch_samples)}")
+
+            all_est_params.append(batch_samples)
+
+        # Concatenate all batches into a single array
+        est_params = torch.cat(all_est_params, dim=0)
+
+        sampling_time = time.time() - start_time
+        
+        est_observations = simulator(est_params)  # (num_samples, observation_dim)
+        if hasattr(task, "dim_external") and task.dim_external > 0:
+            true_observations_ori = true_observations_ori[:, : -task.dim_external]
+            est_observations = est_observations[:, : -task.dim_external]
+        mse = torch.mean((est_observations - true_observations_ori) ** 2)
+        metric_value = torch.sqrt(mse).item()
+        print("Metric value:", metric_value)
+        metric_values.append(metric_value)
+        average_sampling_time += sampling_time / task.num_tests
+        
+        # Plotting
+        ax = axes[i]
+        ax.plot(est_observations.T, color='red', alpha=0.1)  # Many estimated observations
+        ax.plot(true_observations_ori[0], label="True Observation", color='blue', linewidth=2)
+        ax.set_title(f"Test {i+1}")
+        ax.legend()
+    
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path)
+    
+    return metric_values, average_sampling_time
 
 def eval_all_conditional_task(task: AllConditionalTask, model, metric_fn, metric_params, rng, num_samples=2000, num_evaluations=2):
     metric_values = []

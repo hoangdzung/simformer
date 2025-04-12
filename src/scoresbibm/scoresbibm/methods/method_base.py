@@ -2,7 +2,8 @@
 import sbi 
 from sbi.utils import posterior_nn, likelihood_nn, classifier_nn
 from sbi.inference import SNPE, SNLE, SNRE
-from sbi.utils import RestrictedPrior
+from sbi.utils import RestrictedPrior, get_density_thresholder
+
 from scoresbibm.methods.models import SBIPosteriorModel
 
 from scoresbibm.methods.score_sbi import train_conditional_score_model
@@ -17,7 +18,7 @@ def run_npe_default(task,data, method_cfg, rng=None):
     density_estimator = posterior_nn(**method_cfg.model)
     inference = SNPE(density_estimator=density_estimator, device=device)
     _ = inference.append_simulations(thetas, xs)
-    
+
     # Train
     density_estimator = inference.train(**method_cfg.train)
     
@@ -27,7 +28,34 @@ def run_npe_default(task,data, method_cfg, rng=None):
     model = SBIPosteriorModel(posterior, method="npe")
     return model
 
+def run_tsnpe_default(task,data, method_cfg, rng=None, x_o=None):
+    """ Train a default SBI model"""
+    num_observations = method_cfg['train']['num_observations']
+    n_rounds = method_cfg['train']['n_rounds']
+    quantile = method_cfg['train']['quantile']
+    num_samples_to_estimate_support = method_cfg['train']['num_samples_to_estimate_support']
 
+    if x_o is None:
+        x_o = task.get_observation(num_observations)
+    device = method_cfg.device
+    num_sims = data['x'].shape[0]
+    num_sims_per_round = num_sims // n_rounds
+    prior = task.get_torch_prior()
+    proposal = prior
+    
+    density_estimator = posterior_nn(**method_cfg.model)
+    inference = SNPE(density_estimator=density_estimator, device=device)
+    for _ in range(n_rounds):
+        data = task.get_data(num_sims_per_round, rng=rng, proposal=proposal)
+        thetas, xs = data["theta"], data["x"]
+        _ = inference.append_simulations(thetas, xs).train(force_first_round_loss=True)
+        posterior = inference.build_posterior(**method_cfg.posterior).set_default_x(x_o)
+        accept_reject_fn = get_density_thresholder(posterior, quantile=quantile, num_samples_to_estimate_support=num_samples_to_estimate_support)
+        proposal = RestrictedPrior(prior, accept_reject_fn, sample_with="rejection")
+
+    model = SBIPosteriorModel(posterior, method="npe")
+    return model
+    
 def run_nle_default(task, data, method_cfg, rng=None):
     device = method_cfg.device
     thetas, xs = data["theta"], data["x"]
@@ -68,18 +96,26 @@ def run_score_transformer(task, data, method_cfg, rng=None):
     model.set_default_sampling_kwargs(**method_cfg.posterior)
     return model
 
-def run_tp_score_transformer(task, data, method_cfg, rng=None, x_o=None, num_observations=1, n_rounds=5):
+def run_tp_score_transformer(task, data, method_cfg, rng=None, x_o=None):
+    num_observations = method_cfg['train']['num_observations']
+    n_rounds = method_cfg['train']['n_rounds']
+    quantile = method_cfg['train']['quantile']
+    num_samples_to_estimate_support = method_cfg['train']['num_samples_to_estimate_support']
+
     if x_o is None:
         x_o = task.task.get_observation(num_observations)
     prev_params = None
     num_sims = data['x'].shape[0]
+    num_sims_per_round = num_sims // n_rounds
     prior = task.get_torch_prior()
+    proposal = prior
+
     for _ in range(n_rounds):
+        data = task.get_data(num_sims_per_round, rng=rng, proposal=proposal)
         model = train_transformer_model(task, data, method_cfg, rng, prev_params=prev_params)
         model.set_default_x_o(x_o)
-        accept_reject_fn = get_jax_density_thresholder(model, rng=rng, quantile=1e-4, num_samples_to_estimate_support=10_000)
+        accept_reject_fn = get_jax_density_thresholder(model, rng=rng, quantile=quantile, num_samples_to_estimate_support=num_samples_to_estimate_support)
         proposal = RestrictedPrior(prior, accept_reject_fn, sample_with="rejection")
-        data = task.get_data(num_sims, rng=rng, proposal=proposal)
         prev_params = model.params
 
     model.set_default_sampling_kwargs(**method_cfg.posterior)
@@ -88,7 +124,10 @@ def run_tp_score_transformer(task, data, method_cfg, rng=None, x_o=None, num_obs
 
 def get_method(name:str):
     """ Get a method"""
-    if name == "npe":
+    if name == "tsnpe":
+        print("here"*10)
+        return run_tsnpe_default
+    elif name == "npe":
         return run_npe_default
     elif name == "nle":
         return run_nle_default
