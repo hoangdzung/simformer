@@ -120,7 +120,7 @@ def run_train_transformer_model(
         if j == 0:
             l_train = loss[0]
         else:
-            l_train = 0.9 * l_train + 0.1 * loss[0]
+            l_train = 0.9 * l_train + 0.1 * loss[0] # type: ignore
 
         # Validation loss
         if validation_fraction > 0 and ((j % val_every) == 0) and j > 50:

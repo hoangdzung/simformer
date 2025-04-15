@@ -60,7 +60,7 @@ def score_sbi(cfg: DictConfig):
     log.info("Output super directory: {}".format(output_super_dir))
     log.info(f"Hostname: {socket.gethostname()}")
     log.info(f"Jax devices: {jax.devices()}")
-    log.info(f"Torch devices: {torch.cuda.device_count()}")
+    log.info(f"Torch devices: {torch.cuda.device_count()}") # type: ignore
     
     seed = cfg.seed
     rng = set_seed(seed)    
@@ -93,7 +93,6 @@ def score_sbi(cfg: DictConfig):
         rng, rng_train = jax.random.split(rng)
         start_time = time.time()
         model = method_run(task,data, cfg.method, rng=rng_train)
-        breakpoint()
         time_train = time.time() - start_time
     else:
         # Load model

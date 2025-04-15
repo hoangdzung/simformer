@@ -10,6 +10,9 @@ from scoresbibm.methods.score_sbi import train_conditional_score_model
 from scoresbibm.methods.score_transformer import train_transformer_model
 from scoresbibm.utils.restriction_estimator import get_jax_density_thresholder
 
+from nper.masked_flow import posterior_nn as nper_posterior_nn
+from nper.masked_npe import MaskedSNPE
+from nper.masked_embedding import TransformerMaskedEmbeddingNet
 
 def run_npe_default(task,data, method_cfg, rng=None):
     """ Train a default SBI model"""
@@ -24,8 +27,23 @@ def run_npe_default(task,data, method_cfg, rng=None):
     
     # Output is sampling_fn
     posterior = inference.build_posterior(**method_cfg.posterior)
-    breakpoint()
     model = SBIPosteriorModel(posterior, method="npe")
+    return model
+
+def run_masked_npe_default(task,data, method_cfg, rng=None):
+    """ Train a default SBI model"""
+    device = method_cfg.device
+    thetas, xs = data["theta"], data["x"]
+    density_estimator = nper_posterior_nn(embedding_net=TransformerMaskedEmbeddingNet(thetas.shape[1] + xs.shape[1]), **method_cfg.model)
+    inference = MaskedSNPE(density_estimator=density_estimator, device=device)
+    _ = inference.append_simulations(thetas, xs)
+
+    # Train
+    density_estimator = inference.train(**method_cfg.train)
+    
+    # Output is sampling_fn
+    posterior = inference.build_posterior(**method_cfg.posterior)
+    model = SBIPosteriorModel(posterior, method="masked_npe")
     return model
 
 def run_tsnpe_default(task,data, method_cfg, rng=None, x_o=None):
@@ -125,8 +143,9 @@ def run_tp_score_transformer(task, data, method_cfg, rng=None, x_o=None):
 def get_method(name:str):
     """ Get a method"""
     if name == "tsnpe":
-        print("here"*10)
         return run_tsnpe_default
+    elif name == "masked_npe":
+        return run_masked_npe_default
     elif name == "npe":
         return run_npe_default
     elif name == "nle":

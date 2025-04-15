@@ -306,6 +306,12 @@ class SBIPosteriorModel(PosteriorModel):
     def _sample(self, num_samples, x_o, rng=None, **kwargs):
         if self.method in ["npe", "nle", "nre"]:
             return self.sbi_posterior.sample((num_samples,), x=x_o)
+        elif self.method == "masked_npe":
+            x_o = x_o.to(next(self.sbi_posterior.posterior_estimator.parameters()).device)
+            assert x_o.shape[1] == self.sbi_posterior.real_x_shape
+            dummy = torch.zeros(x_o.shape[0], self.sbi_posterior._x_shape[1] - self.sbi_posterior.real_x_shape, device=x_o.device, dtype=x_o.dtype)
+            full_x_o = torch.cat([dummy, x_o], dim=1)
+            return self.sbi_posterior.sample((num_samples,), x=full_x_o)[:, :-self.sbi_posterior.real_x_shape].cpu()
         else:
             raise NotImplementedError()
 
