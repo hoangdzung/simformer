@@ -24,7 +24,7 @@ def run_npe_default(task,data, method_cfg, rng=None):
     
     # Output is sampling_fn
     posterior = inference.build_posterior(**method_cfg.posterior)
-    
+    breakpoint()
     model = SBIPosteriorModel(posterior, method="npe")
     return model
 

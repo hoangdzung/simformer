@@ -1,3 +1,5 @@
+import math
+
 import jax
 import jax.numpy as jnp
 
@@ -123,7 +125,7 @@ def run_train_transformer_model(
         # Validation loss
         if validation_fraction > 0 and ((j % val_every) == 0) and j > 50:
             need_transfer = data_val.devices() != jax.devices()[0]
-            num_batches = len(data_val) // batch_size
+            num_batches = math.ceil(len(data_val) / batch_size)
             batch_losses = []
             for i in range(num_batches):
                 batch_data_val = data_val[i * batch_size : (i + 1) * batch_size]

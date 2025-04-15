@@ -93,6 +93,7 @@ def score_sbi(cfg: DictConfig):
         rng, rng_train = jax.random.split(rng)
         start_time = time.time()
         model = method_run(task,data, cfg.method, rng=rng_train)
+        breakpoint()
         time_train = time.time() - start_time
     else:
         # Load model
